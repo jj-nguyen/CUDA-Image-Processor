@@ -123,38 +123,57 @@ void blurImage(unsigned char *data, unsigned char *blurData, int height, int wid
       ImageSetPixelDevice(image, x, y, 2, newB);
     }
   }
+}
 
-  /*int x = myID;
-  for (int y = 0; y < height; y++){
+__global__
+void pixelateImage(unsigned char *data, unsigned char *blurData, int height, int width, int r,int totalThreads){
 
-    if (x > width-1){
-      x = x - width-1;
-      y++;
+  int myID = (blockIdx.z * gridDim.x * gridDim.y +
+              blockIdx.y * gridDim.x +
+              blockIdx.x) * blockDim.x +
+              threadIdx.x;
+  int minX;
+  int maxX;
+  int minY;
+  int maxY;
+
+  int spacing = r*2;
+
+  unsigned char newR = 0;
+
+  unsigned char newG = 0;
+  unsigned char newB = 0;
+
+  Image *image = (Image *) malloc(sizeof(Image));
+  image->data   = data;
+  image->width  = width;
+  image->height = height;
+
+  for (int y = r; y < height; y = y + spacing){
+    for (int x = r; x < width; x = x + spacing){
+      image->data = data;
+      // Calculates new bounds for the blurring of the pixel based on the blur radius
+      minX = checkBoundsWidth(x - r,image->width);
+      maxX = checkBoundsWidth(x + r,image->width);
+      minY = checkBoundsHeight(y - r,image->height);
+      maxY = checkBoundsHeight(y + r,image->height);
+
+      newR = calcBlurColour(image, minX, maxX, minY, maxY,0);
+      newG = calcBlurColour(image, minX, maxX, minY, maxY,1);
+      newB = calcBlurColour(image, minX, maxX, minY, maxY,2);
+
+      image->data = blurData;
+
+      for (int x = minX; x < maxX; x++){
+        for (int y = minY; y < maxY; y++){
+          // Blurs 3 channels (r,g,b) of pixel
+          ImageSetPixelDevice(image,x,y,0,newR);
+          ImageSetPixelDevice(image,x,y,1,newG);
+          ImageSetPixelDevice(image,x,y,2,newB);
+        }
+      }
     }
-
-    image->data = data;
-    // Calcualtes new bounds for the blurring of the pixel based on the blur radius
-    minX = checkBoundsWidth(x - r,image->width);
-    maxX = checkBoundsWidth(x + r,image->width);
-    minY = checkBoundsHeight(y - r,image->height);
-    maxY = checkBoundsHeight(y + r,image->height);
-
-    newR = calcBlurColour(image, minX, maxX, minY, maxY,0);
-    newG = calcBlurColour(image, minX, maxX, minY, maxY,1);
-    newB = calcBlurColour(image, minX, maxX, minY, maxY,2);
-
-    image->data = blurData;
-
-    ImageSetPixelDevice(image, x, y, 0, newR);
-    ImageSetPixelDevice(image, x, y, 1, newG);
-    ImageSetPixelDevice(image, x, y, 2, newB);
-    x = x + totalThreads;
-
-    if (x > width-1){
-      x = x - width-1;
-      y++;
-    }
-  }*/
+  }
 }
 
 int main(int argc, char**argv){
@@ -165,7 +184,7 @@ int main(int argc, char**argv){
   int blockHeight = 1;
   int blockWidth = 1024;
 
-  int gridHeight = 3;
+  int gridHeight = 1;
   int gridWidth = 1;
   int gridLength = 1;
 
@@ -196,9 +215,14 @@ int main(int argc, char**argv){
 
   // Start Timer
   start = clock();
-
-  blurImage<<<gridHeight,blockHeight*blockWidth>>>(data,blurData,imageFile->height,imageFile->width,r,totalThreads);
-  cudaDeviceSynchronize();
+  printf("%s\n",argv[4]);
+  if (strcmp(argv[4],"blur") == 0){
+    blurImage<<<gridHeight,blockHeight*blockWidth>>>(data,blurData,imageFile->height,imageFile->width,r,totalThreads);
+    cudaDeviceSynchronize();
+  } else {
+    pixelateImage<<<gridHeight,blockHeight*blockWidth>>>(data,blurData,imageFile->height,imageFile->width,r,totalThreads);
+    cudaDeviceSynchronize();
+  }
 
   // References blurred data to output image
   outputImage->data = blurData;
@@ -209,41 +233,6 @@ int main(int argc, char**argv){
   ImageWrite(outputImage,argv[3]);
   printf("Image: %s blurred, saved as: %s\n",argv[2],argv[3]);
   printf("Clock ticks: %li\n",end1);
-
-  printf("Blurring Image based on CPU...\n");
-
-  // Start Timer
-  start = clock();
-
-  // CPU Blur Computation
-  for (int y = 0; y < imageFile->height; y++){
-      for (int x = 0; x < imageFile->width; x++){
-      imageFile->data = data;
-      // Calculates new bounds for the blurring of the pixel based on the blur radius
-      int minX = checkBoundsWidth(x - r,imageFile->width);
-      int maxX = checkBoundsWidth(x + r,imageFile->width);
-      int minY = checkBoundsHeight(y - r,imageFile->height);
-      int maxY = checkBoundsHeight(y + r,imageFile->height);
-
-      unsigned char newR = calcBlurColour(imageFile, minX, maxX, minY, maxY,0);
-      unsigned char newG = calcBlurColour(imageFile, minX, maxX, minY, maxY,1);
-      unsigned char newB = calcBlurColour(imageFile, minX, maxX, minY, maxY,2);
-
-      imageFile->data = blurData;
-      ImageSetPixel(imageFile,x,y,0,newR);
-      ImageSetPixel(imageFile,x,y,1,newG);
-      ImageSetPixel(imageFile,x,y,2,newB);
-    }
-  }
-
-  ImageWrite(imageFile,"cpu.ppm");
-
-  // End Timer
-  end2 = clock() - start;
-
-  printf("Image: %s blurred, saved as: %s\n",argv[2],"cpu.ppm");
-  printf("Clock ticks: %li\n",end2);
-  printf("GPU is %li times faster than CPU\n",(end2/end1));
 
   //endTime = MPI_Wtime();
   //totalTime = endTime - startTime;
